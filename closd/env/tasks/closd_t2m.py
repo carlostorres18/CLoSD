@@ -40,13 +40,30 @@ class CLoSDT2M(closd_task.CLoSDTask):
                          device_id=device_id,
                          headless=headless)
         self.init_state = STATES.TEXT2MOTION
+        self.custom_prompt = self.cfg['env']['dip'].get('custom_prompt', '')  # if non-empty, overrides dataset-sampled prompts
         self.hml_data_buf_size = max(self.fake_mdm_args.context_len, self.planning_horizon_20fps)
-        self.hml_prefix_from_data = torch.zeros([self.num_envs, 263, 1, self.hml_data_buf_size], dtype=torch.float32, device=self.device)
+        # hml_prefix_from_data seeds the first planning steps with a real dataset motion. It is
+        # only meaningful when prompts come from the dataset; downstream code in closd.py gates
+        # on hasattr(self, 'hml_prefix_from_data'), so for a custom prompt we deliberately leave
+        # it undefined and behave like closd_multitask (pose buffer seeded from the real pose).
+        if self.custom_prompt == '':
+            self.hml_prefix_from_data = torch.zeros([self.num_envs, 263, 1, self.hml_data_buf_size], dtype=torch.float32, device=self.device)
         return
-    
-    def update_mdm_conditions(self, env_ids):  
+
+    def update_mdm_conditions(self, env_ids):
         super().update_mdm_conditions(env_ids)
-        
+
+        if self.custom_prompt != '':
+            # user-defined prompt: apply the same text to every env and skip the dataset.
+            # The dataset lengths/tokens/db_keys are only evaluation bookkeeping, and the real
+            # motion prefix (hml_prefix_from_data) is not needed because the pose buffer is
+            # already seeded from the character's own pose in _reset_pose_buffer.
+            for i in env_ids:
+                self.hml_prompts[int(i)] = self.custom_prompt
+            if self.cfg['env']['dip']['debug_hml']:
+                print(f'in update_mdm_conditions: using custom_prompt for env_ids={env_ids[:10].cpu().numpy()}, prompt={self.custom_prompt!r}')
+            return
+
         # updates prompts and lengths
         try:
             gt_motion, model_kwargs = next(self.mdm_data_iter)
@@ -56,9 +73,9 @@ class CLoSDT2M(closd_task.CLoSDTask):
             gt_motion, model_kwargs = next(self.mdm_data_iter)
         for i in env_ids:
             self.hml_prompts[int(i)] = model_kwargs['y']['text'][int(i)]
-            self.hml_lengths[int(i)] = model_kwargs['y']['lengths'][int(i)]  
-            self.hml_tokens[int(i)] = model_kwargs['y']['tokens'][int(i)]  
-            self.db_keys[int(i)] = model_kwargs['y']['db_key'][int(i)]  
+            self.hml_lengths[int(i)] = model_kwargs['y']['lengths'][int(i)]
+            self.hml_tokens[int(i)] = model_kwargs['y']['tokens'][int(i)]
+            self.db_keys[int(i)] = model_kwargs['y']['db_key'][int(i)]
         self.hml_prefix_from_data[env_ids] = gt_motion[..., :self.hml_data_buf_size].to(self.device)[env_ids]  # will be used by the first MDM iteration
         if self.cfg['env']['dip']['debug_hml']:
             print(f'in update_mdm_conditions: 1st 10 env_ids={env_ids[:10].cpu().numpy()}, prompts={self.hml_prompts[:2]}')

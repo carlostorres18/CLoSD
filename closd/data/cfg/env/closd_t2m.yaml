@@ -7,6 +7,7 @@ episode_length: 300
 dip:
   model_path: closd/diffusion_planner/save/DiP_no-target_10steps_context20_predict40/model000200000.pt  # without target cond
   cfg_param: 5
+  custom_prompt: ''   # if non-empty, used as the text prompt for every env instead of sampling from the dataset
 save_motion:
   save_hml_episodes: False
   save_hml_episodes_dir: ''
