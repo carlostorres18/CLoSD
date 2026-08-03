@@ -8,6 +8,9 @@ dip:
   model_path: closd/diffusion_planner/save/DiP_no-target_10steps_context20_predict40/model000200000.pt  # without target cond
   cfg_param: 5
   custom_prompt: ''   # if non-empty, used as the text prompt for every env instead of sampling from the dataset
+  custom_prompt_sequence: ''         # pipe-separated prompts, e.g. "a person squats down|a person claps"
+  custom_prompt_sequence_frames: ''  # pipe-separated frame counts per prompt (sim steps); empty = default_segment_frames for all
+  default_segment_frames: 90         # ~3s at 30fps; used when custom_prompt_sequence_frames is empty
 save_motion:
   save_hml_episodes: False
   save_hml_episodes_dir: ''

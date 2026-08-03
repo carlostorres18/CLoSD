@@ -41,17 +41,59 @@ class CLoSDT2M(closd_task.CLoSDTask):
                          headless=headless)
         self.init_state = STATES.TEXT2MOTION
         self.custom_prompt = self.cfg['env']['dip'].get('custom_prompt', '')  # if non-empty, overrides dataset-sampled prompts
+        # optional ordered queue of prompts (e.g. "squat" then "clap"): each entry plays for its
+        # own frame duration, then update_state_machine() swaps in the next one mid-episode. The
+        # pose buffer already tracks the real simulated pose, so the next prompt is naturally
+        # planned onward from wherever the previous one left the character.
+        self.prompt_sequence = [p for p in self.cfg['env']['dip'].get('custom_prompt_sequence', '').split('|') if p != '']
+        if self.prompt_sequence:
+            _frames_str = self.cfg['env']['dip'].get('custom_prompt_sequence_frames', '')
+            if _frames_str:
+                self.prompt_durations = [int(f) for f in _frames_str.split('|')]
+                assert len(self.prompt_durations) == len(self.prompt_sequence), \
+                    'custom_prompt_sequence_frames must have the same number of |-separated entries as custom_prompt_sequence'
+            else:
+                self.prompt_durations = [self.cfg['env']['dip'].get('default_segment_frames', 90)] * len(self.prompt_sequence)
+            self.seq_idx = torch.zeros([self.num_envs], dtype=torch.int64, device=self.device)
+            self.seq_switch_frame = torch.zeros([self.num_envs], dtype=torch.int64, device=self.device)
         self.hml_data_buf_size = max(self.fake_mdm_args.context_len, self.planning_horizon_20fps)
         # hml_prefix_from_data seeds the first planning steps with a real dataset motion. It is
         # only meaningful when prompts come from the dataset; downstream code in closd.py gates
         # on hasattr(self, 'hml_prefix_from_data'), so for a custom prompt we deliberately leave
         # it undefined and behave like closd_multitask (pose buffer seeded from the real pose).
-        if self.custom_prompt == '':
+        if self.custom_prompt == '' and not self.prompt_sequence:
             self.hml_prefix_from_data = torch.zeros([self.num_envs, 263, 1, self.hml_data_buf_size], dtype=torch.float32, device=self.device)
+        return
+
+    def _reset_env_tensors(self, env_ids):
+        super()._reset_env_tensors(env_ids)
+        if self.prompt_sequence:
+            self.seq_idx[env_ids] = 0
+            self.seq_switch_frame[env_ids] = 0
+        return
+
+    def update_state_machine(self):
+        if not self.prompt_sequence:
+            return
+        durations = torch.tensor(self.prompt_durations, device=self.device, dtype=self.progress_buf.dtype)
+        elapsed = self.progress_buf - self.seq_switch_frame
+        not_last = self.seq_idx < (len(self.prompt_sequence) - 1)
+        advance = (elapsed >= durations[self.seq_idx]) & not_last
+        if torch.any(advance):
+            self.seq_idx[advance] += 1
+            self.seq_switch_frame[advance] = self.progress_buf[advance]
+            self.update_mdm_conditions(advance.nonzero(as_tuple=False).squeeze(-1))
         return
 
     def update_mdm_conditions(self, env_ids):
         super().update_mdm_conditions(env_ids)
+
+        if self.prompt_sequence:
+            for i in env_ids:
+                self.hml_prompts[int(i)] = self.prompt_sequence[int(self.seq_idx[int(i)])]
+            if self.cfg['env']['dip']['debug_hml']:
+                print(f'in update_mdm_conditions: seq prompt for env_ids={env_ids[:10]}, idx={self.seq_idx[env_ids[:10]].cpu().numpy()}')
+            return
 
         if self.custom_prompt != '':
             # user-defined prompt: apply the same text to every env and skip the dataset.

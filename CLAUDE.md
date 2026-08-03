@@ -50,7 +50,20 @@ Common flags: `test=True` (inference/play mode), `headless=True/False` (monitor 
 `no_virtual_display=True` needed when running with a monitor), `epoch=-1` (resume last checkpoint),
 `env.num_envs=N`, `exp_name=CLoSD_no_finetune` vs `CLoSD_multitask_finetune`/`CLoSD_t2m_finetune`
 (fine-tuned vs not), `env.dip.cfg_param=<classifier-free guidance scale>`, `learning=im_toy` +
-`no_log=True env.num_envs=4` for a fast debug run.
+`no_log=True env.num_envs=4` for a fast debug run. For `env=closd_t2m`, `env.dip.custom_prompt=<text>`
+overrides the dataset-sampled prompt so every env acts out the given text instead
+(`closd_t2m.py`'s `CLoSDT2M.update_mdm_conditions`); `./scripts/run_prompt.sh "<prompt text>"` wraps
+this into a single command (`--dry-run` to print without executing, `-h` for other options).
+For a *sequence* of prompts played back-to-back in one continuous rollout (e.g. squat then clap),
+`env.dip.custom_prompt_sequence=<a|b|c>` + `env.dip.custom_prompt_sequence_frames=<n1|n2|n3>`
+(pipe-separated; frames default to `env.dip.default_segment_frames`) swap `hml_prompts` mid-episode
+via `CLoSDT2M.update_state_machine` — the pose buffer carries the real simulated pose forward, so
+each prompt plans onward from where the previous one left the character (no explicit stitching).
+`./scripts/run_prompt_sequence.sh "<prompt 1>" "<prompt 2>" [...]` wraps this
+(`-s/--seconds-per-prompt`, `--dry-run`, `-h`). Design notes / rationale for these custom-prompt
+features live in `implemented_plans/` (`custom_prompt.md`, `run_prompt_script.md`) — read them
+before extending the prompt/sequence machinery, as they document what is deliberately out of scope
+(e.g. no language→3D-target grounding for `closd_t2m`).
 
 Standalone DiP (the diffusion planner) can also be sampled/evaluated/trained without the CLoSD/IsaacGym
 loop via `python -m closd.diffusion_planner.<sample.generate|eval.eval_humanml|train.train_mdm>`
